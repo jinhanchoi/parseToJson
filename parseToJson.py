@@ -1,6 +1,8 @@
 import os
 import tarfile
 import json
+import time
+
 import multiprocessing
 from multiprocessing import current_process
 def searchTarget():
@@ -51,6 +53,7 @@ def convertToJson(filename):
                     # bodyJson = json.dumps(bodyData)
                     results.append(data)
             newFile.write(json.dumps(results))
+    
 
 
 def headerToJson(header):
@@ -191,8 +194,12 @@ def checkResultDirAndCreate():
 
 if __name__ == '__main__': 
     targetList = searchTarget()
+    count_t = time.time()
     print("total targets is  %s" %len(targetList))
     checkResultDirAndCreate()
+
     pool = multiprocessing.Pool(min(multiprocessing.cpu_count(),len(targetList)))
     pool.map(convertToJson, targetList, chunksize=1)
     pool.close()
+
+    print('Running Time : %.02f' % (time.time() - count_t))
