@@ -25,44 +25,42 @@ def get_csv_writer(filename, rows, delimiter):
         for row in rows: 
             try: writer.writerow(row) 
             except Exception as detail: 
-                # print type(detail) 
                 print(detail)
 
 def convertToCSV(filename,options):
     proc_name = current_process().name
     print('{0} start convert to csv by: {1}'.format(filename, proc_name))
     with open(filename,"r",encoding="EUC-KR") as origFile:
-        lines = origFile.readlines()
-        filenameWithoutExt = os.path.splitext(filename)[0]
-        results = []
-        for line in lines:
-            if(line != "\n"):
-                data = {}
+        try:
+            lines = origFile.readlines()
+            filenameWithoutExt = os.path.splitext(filename)[0]
+            results = []
+            for line in lines:
+                if(line != "\n"):
+                    data = {}
 
-                lineByteArray = bytearray()
-                lineByteArray.extend(line.encode("EUC-KR"))
+                    lineByteArray = bytearray()
+                    lineByteArray.extend(line.encode("EUC-KR"))
+                    
+                    header = lineByteArray[:73]
+                    headerData = headerToDict(header)
                 
-                header = lineByteArray[:73]
-                headerData = headerToDict(header)
-                # if(headerData['opCode'] == "01" or headerData['opCode'] == "02" or headerData['opCode'] == "03" or headerData['opCode'] == "04" or headerData['opCode'] == "05"):
-                if(headerData['opCode'] in options):
-                    body = lineByteArray[73:]
-                    bodyData = bodyToDict(headerData['opCode'],body,options)
-                    # data = {}
-                    # data.update(headerData)
-                    # data.update(bodyData[0])
-                    try:
-                        for body in bodyData:
-                            data = {}
-                            data.update(headerData)
-                            data.update(body)
-                            results.append(data)
-                    except Exception as detail:
-                        print(bodyData)
-        filenameWithoutExt = filenameWithoutExt+'_events' if "70" not in options else filenameWithoutExt+'_dtg'
-        if results:
-            get_csv_writer("./results/"+filenameWithoutExt+".csv",results,',')
-
+                    if(headerData['opCode'] in options):
+                        body = lineByteArray[73:]
+                        bodyData = bodyToDict(headerData['opCode'],body,options)
+                        try:
+                            for body in bodyData:
+                                data = {}
+                                data.update(headerData)
+                                data.update(body)
+                                results.append(data)
+                        except Exception as detail:
+                            print(bodyData)
+            filenameWithoutExt = "events/"+filenameWithoutExt+'_events' if "70" not in options else "dtg/"+filenameWithoutExt+'_dtg'
+            if results:
+                get_csv_writer("./results/"+filenameWithoutExt+".csv",results,',')
+        except Exception as detail:
+            print(filename)
 def getDefaultDataFormat(options):
     data = {}
     if "70" not in options:
@@ -88,8 +86,8 @@ def getDefaultDataFormat(options):
         data['rideDistance'] = ""
         data['emptyDistance'] = ""
 
-        data['paymentDateTime'] = ""
-        data['totalPrice'] = ""
+        data['engineStartDateTime'] = ""
+        data['engineOnOff'] = ""
 
         data['changeDateTime'] = ""
         data['slowdownLate1'] = ""
@@ -193,8 +191,8 @@ def makeBusinessDataDict(body,data):
 
 def makeEngineDataDict(body,data):
     results=[]
-    data['paymentDateTime'] = body[:14].decode("EUC-KR")
-    data['totalPrice'] = body[14:15].decode("EUC-KR")
+    data['engineStartDateTime'] = body[:14].decode("EUC-KR")
+    data['engineOnOff'] = body[14:15].decode("EUC-KR")
     results.append(data)
     return results
 
@@ -272,11 +270,38 @@ def makeDriveDataDict(body,data):
 def checkResultDirAndCreate():
     if not os.path.isdir('./results'):
         os.mkdir('./results')
+    if not os.path.isdir('./results/events'):
+        os.mkdir('./results/events')
+    if not os.path.isdir('./results/dtg'):
+        os.mkdir('./results/dtg')
+    if not os.path.isdir("./results/merged"):
+        os.mkdir('./results/merged')
+
+def findMergeTarget(subfix):
+    targetDir = "./results/events/"
+    targetList = []
+    if subfix == "_dtg":
+        targetDir = "./results/dtg/"
+    for (path, dir, files) in os.walk(targetDir):
+        for filename in files:
+            filenameWithoutExt = os.path.splitext(filename)[0]
+            ext = os.path.splitext(filename)[-1]
+            if subfix in filenameWithoutExt:   
+                if ext == '.csv':
+                    targetList.append(targetDir+filename)
+    return targetList
+
+def mergeCSVTargetsRead(filename):
+    with open(filename,'r',encoding="EUC-KR") as f:
+        lines = f.readlines()
+        datas = list(filter(lambda x : x != "\n",lines))
+    return datas
 
 if __name__ == '__main__':
     if not sys.argv[1:]:
         print("please insert options : ex) 01 02 03 04 05 or 70")
         sys.exit(0)
+
     targetList = searchTarget()
     count_t = time.time()
     print("total targets is  %s" %len(targetList))
@@ -285,5 +310,30 @@ if __name__ == '__main__':
     pool = multiprocessing.Pool(min(multiprocessing.cpu_count(),len(targetList)))
     pool.map(convertToCSV_options, targetList, chunksize=1)
     pool.close()
+    pool.join()
+
+    time.sleep(2)
+
+    print("start merge to one csv file!")
+    needHeader = True
+    mergeType=""
+    if("70" in sys.argv[1:]):
+        mergeType = "_dtg"
+    else:
+        mergeType = "_events"
+    mergeTarget = findMergeTarget(mergeType)
+    print("total merge targets is  %s" %len(mergeTarget))
+
+    p = multiprocessing.Pool(min(multiprocessing.cpu_count(),len(targetList)))
+    with open('./results/merged/result'+mergeType+".csv",'w') as rFile:
+        for result in p.imap(mergeCSVTargetsRead, mergeTarget):
+            result = result if needHeader else result[1:]
+            rFile.write("".join(result))
+
+            needHeader = False
+    p.close()
+    p.join()
+
+   
 
     print('Running Time : %.02f' % (time.time() - count_t))
